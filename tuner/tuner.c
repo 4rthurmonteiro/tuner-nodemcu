@@ -6,7 +6,15 @@
 #include <timers.h>
 #include <string.h>
 #include <ssd1306/ssd1306.h>
+#include <stdlib.h>
+#include "esp8266.h"
 
+const int gpio = 2;
+const int gpio_button_plus = 16;   /* gpio 0 usually has "PROGRAM" button attached */
+const int gpio_button_low = 14;
+const int gpio_switch = 12;
+const int active = 0; /* active == 0 for active low */
+//
 /* Remove this line if your display connected by SPI */
 #define I2C_CONNECTION
 
@@ -18,6 +26,7 @@
 /* Change this according to you schematics and display size */
 #define DISPLAY_WIDTH  128
 #define DISPLAY_HEIGHT 64
+
 
 #ifdef I2C_CONNECTION
     #define PROTOCOL SSD1306_PROTO_I2C
@@ -50,35 +59,92 @@ static const ssd1306_t dev = {
 /* Local frame buffer */
 static uint8_t buffer[DISPLAY_WIDTH * DISPLAY_HEIGHT / 8];
 
+
+
 uint8_t frame_done = 0; // number of frame send.
 uint8_t fps = 0; // image per second.
 
 const font_info_t *font = NULL; // current font
 font_face_t font_face = 0;
 
-float freq = 85; // number to start the test frequency
+float freq = 85;
+
 
 #define SECOND (1000 / portTICK_PERIOD_MS)
 
+long map(long x, long in_min, long in_max, long out_min, long out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+/* This task uses the high level GPIO API (esp_gpio.h) to blink an LED.
+ *
+ */
+void blinkenTask(void *pvParameters)
+{
+    long button = 40;
+
+    QueueHandle_t *tsqueue = (QueueHandle_t *)pvParameters;
+//    gpio_enable(gpio_switch, GPIO_INPUT);
+
+    gpio_enable(gpio, GPIO_OUTPUT);
+    gpio_enable(gpio_button_low, GPIO_INPUT);
+
+    long time = map(button, 0, 1023, 40, 210 ); // map in range of 40 to 210 bpm
+
+    long interval = (1000/ time)*60; // convert time to bpm
+    printf("intervalo inicial: %ld\n", interval);
+    while(1) {
+      while((gpio_read(gpio_button_plus) != active) || (gpio_read(gpio_button_low) != active)) // botão foi pressionado
+        {
+            if((gpio_read(gpio_button_plus) != active)) button++;
+
+            if((gpio_read(gpio_button_low) != active)) button--;
+
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+            printf("button atualizado: %ld\n", button);
+            time = map(button, 0, 1023, 40, 218 ); // map in range of 40 to 218 bpm
+
+            interval = (1000/ time)*60; // convert time to bpm
+        }
+
+
+        gpio_write(gpio, 1);
+
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+
+        gpio_write(gpio, 0);
+
+        printf("intervalo atualizado: %ld\n", interval);
+        vTaskDelay(interval / portTICK_PERIOD_MS);
+
+
+    }
+}
+
 static void ssd1306_task(void *pvParameters)
 {
+  //  gpio_enable(gpio_switch, GPIO_INPUT);
+
     float  *frequency;
-
     frequency = (float *)pvParameters;
-
     printf("%s: Started user interface task\n", __FUNCTION__);
-
     vTaskDelay(SECOND);
 
     ssd1306_set_whole_display_lighting(&dev, false);
 
     while (1) {
+      while(gpio_read(gpio_switch) != active)
+        {
+            taskYIELD();
+        }
+
         if(*frequency < 80){
           ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, "E +", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 80.0 && *frequency < 85 ){
-          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 0, 12, ">> E <<", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, " E ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 85.0 && *frequency < 95 ){
@@ -90,7 +156,7 @@ static void ssd1306_task(void *pvParameters)
         }
 
         if(*frequency >= 105.0 && *frequency < 115 ){
-            ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 0, 12, ">> A <<", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+            ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, " A ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 115.0 && *frequency < 125 ){
@@ -102,7 +168,7 @@ static void ssd1306_task(void *pvParameters)
         }
 
         if(*frequency >= 140.0 && *frequency < 150 ){
-          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 0, 12, ">> D <<", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, "D", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 150.0 && *frequency < 165 ){
@@ -114,7 +180,7 @@ static void ssd1306_task(void *pvParameters)
         }
 
         if(*frequency >= 190.0 && *frequency < 200 ){
-          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 0, 12, ">> G <<", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, "G", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 200.0 && *frequency < 215 ){
@@ -126,7 +192,7 @@ static void ssd1306_task(void *pvParameters)
         }
 
         if(*frequency >= 240.0 && *frequency < 250 ){
-          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 0, 12, ">> B <<", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, "B", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 250.0 && *frequency < 280 ){
@@ -138,7 +204,7 @@ static void ssd1306_task(void *pvParameters)
         }
 
         if(*frequency >= 320.0 && *frequency < 330 ){
-          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 0, 12, ">> E <<", OLED_COLOR_BLACK, OLED_COLOR_WHITE);
+          ssd1306_draw_string(&dev, buffer, font_builtin_fonts[DEFAULT_FONT], 34, 12, "E", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
         }
 
         if(*frequency >= 330.0){
@@ -160,6 +226,9 @@ error_loop:
     }
 }
 
+static QueueHandle_t tsqueue;
+
+
 void user_init(void)
 {
     // Setup HW
@@ -180,15 +249,18 @@ void user_init(void)
 
     font = font_builtin_fonts[font_face];
 
-  //freq = sdk_system_adc_read(); // catches the analog value from : A0
+
 
     // Create user interface task
-    xTaskCreate(ssd1306_task, "ssd1306_task", 256, &freq, 2, NULL);
+    tsqueue = xQueueCreate(2, sizeof(uint32_t));
+    xTaskCreate(ssd1306_task, "ssd1306_task", 256, &freq, 1, NULL);
+    xTaskCreate(blinkenTask, "blinkenTask", 256, &tsqueue , 2, NULL);
 
-
-    int i; // Pequena demonstração das Letras
+/*
+    int i;
     for(i = 0; i < 100; i ++){
       freq++;
       vTaskDelay(SECOND);
-    }
+*/
+//    }
 }
