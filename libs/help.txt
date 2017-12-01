@@ -1,7 +1,0 @@
-dmesg | grep tty
-
-sudo chmod 777 /dev/ttyUSB0
-
-make
-
-make test
